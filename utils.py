@@ -25,7 +25,7 @@ def set_lr(optimizer, model):
 
 
 def train(model, dataloader, criterion, optimizer, epochs,
-          verbose=False):
+          scheduler=None, verbose=False):
     model.train()
     losses = []
     epoch_iter = trange(epochs, position=0) if verbose else range(epochs)
@@ -43,6 +43,8 @@ def train(model, dataloader, criterion, optimizer, epochs,
             tr_loss += loss.data.cpu()
             loss.backward()
             optimizer.step()
+            if scheduler:
+                scheduler.step()
         overall_loss = tr_loss / len(dataloader)
         losses.append(overall_loss)
         if verbose:

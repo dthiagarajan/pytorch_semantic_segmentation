@@ -1,17 +1,18 @@
 import numpy as np
 import os
 import random
-import tifffile as tiff
 
+import torch
 from torch.utils import data
 import torchvision.transforms.functional as tf
 
 from PIL import Image
 
 
-class EMStackDataset(data.Dataset):
-    def __init__(self, x, y, is_train=True):
-        self.x, self.y = x, x if y is None else y
+class CamvidDataset(data.Dataset):
+    def __init__(self, data, is_train=True):
+        self.images, self.labels = [tpl[0] for tpl in data], \
+                                   [tpl[1] for tpl in data]
         self.is_train = is_train
 
     @staticmethod
@@ -42,38 +43,56 @@ class EMStackDataset(data.Dataset):
         return startpoints, endpoints
 
     def transform(self, index):
-        input, target = map(
-            Image.fromarray, (self.x[..., index], self.y[..., index]))
-        if self.is_train:
-            max_dx = 0.1 * input.size[0]
-            max_dy = 0.1 * input.size[1]
+        input, target = map(lambda im: Image.open(im),
+                            (self.images[index], self.labels[index]))
+        tfm_input, tfm_target = (
+            tf.resize(input, (360, 480)),
+            tf.resize(target, (360, 480), interpolation=Image.NEAREST)
+        )
+        if self.is_train and False:  # Affine transformations
+            max_dx = 0.1 * tfm_input.size[0]
+            max_dy = 0.1 * tfm_input.size[1]
             translations = (np.round(random.uniform(-max_dx, max_dx)),
                             np.round(random.uniform(-max_dy, max_dy)))
             rotation = random.uniform(0, 15)
-            tfm_input, tfm_target = tf.affine(input, rotation, translations, 1, 0), \
-                tf.affine(target, rotation, translations, 1, 0)
+            tfm_input, tfm_target = tf.affine(tfm_input, rotation, translations, 1, 0), \
+                tf.affine(tfm_target, rotation, translations, 1, 0)
             if random.random() < 0.5:
                 width, height = input.size
                 startpoints, endpoints = self.get_params(width, height, 0.5)
                 tfm_input, tfm_target = tf.perspective(tfm_input, startpoints, endpoints), \
                     tf.perspective(tfm_target, startpoints, endpoints)
-        else:
-            tfm_input, tfm_target = input, target
+        
         tfm_input, tfm_target = map(tf.to_tensor, (tfm_input, tfm_target))
+        torch.clamp((255 * tfm_target), 0, 32, out=tfm_target)
         return tf.normalize(tfm_input, (0.5,), (0.5,)), tfm_target.long()
 
     def __getitem__(self, index):
         return self.transform(index)
 
     def __len__(self):
-        return self.x.shape[-1]
+        return len(self.images)
 
 
 def load_dataset(data_directory):
-    train_volume = tiff.imread(os.path.join(
-        data_directory, 'train-volume.tif')).transpose((1, 2, 0))
-    train_labels = tiff.imread(os.path.join(
-        data_directory, 'train-labels.tif')).transpose((1, 2, 0))
-    test_volume = tiff.imread(os.path.join(
-        data_directory, 'test-volume.tif')).transpose((1, 2, 0))
-    return train_volume, train_labels, test_volume
+    with open(os.path.join(data_directory, "valid.txt"), "r") as f:
+        val_names = [line.strip() for line in f]
+    with open(os.path.join(data_directory, "codes.txt"), "r") as f:
+        label_mapping = {l.strip(): i for i, l in enumerate(f)}
+    data = []
+    image_index_mapping = {}
+    for im_f in os.listdir(os.path.join(data_directory, "images")):
+        if im_f.split('.')[-1] != 'png':
+            continue
+        image_index_mapping[im_f] = len(data)
+        fp = os.path.join(data_directory, "images", im_f)
+        data.append(fp)
+    for label_f in os.listdir(os.path.join(data_directory, "labels")):
+        im_f = label_f.split('.')
+        im_f[0] = '_'.join(im_f[0].split('_')[:-1])
+        im_f = '.'.join(im_f)
+        index = image_index_mapping[im_f]
+        fp = os.path.join(data_directory, "labels", label_f)
+        data[index] = (data[index], fp)
+    val_indices = [image_index_mapping[name] for name in val_names]
+    return data, val_indices, label_mapping

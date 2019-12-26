@@ -14,16 +14,16 @@ import torch.nn as nn
 
 
 class UNet(nn.Module):
-    def __init__(self, n, num_classes, dilated=True):
+    def __init__(self, n, num_inputs, num_classes, dilated=True):
         super(UNet, self).__init__()
-        self.encoder = stacked_down_conv(n, 1)
+        self.encoder = stacked_down_conv(n, num_inputs)
         if dilated:
-            self.decoder = stacked_upsampler(n, 2**n, 3)
-            self.combiners = upsampling_combiners(n, 2**n)
+            self.decoder = stacked_upsampler(n, num_inputs * (2**n), 3)
+            self.combiners = upsampling_combiners(n, num_inputs * 2**n)
         else:
-            self.decoder = stacked_up_conv(n, 2**n)
-            self.combiners = upsampling_combiners(n, 2**n)
-        self.output = ConvLayer(1, num_classes, bn=False, kernel_size=1)
+            self.decoder = stacked_up_conv(n, num_inputs * (2**n))
+            self.combiners = upsampling_combiners(n, num_inputs * (2**n))
+        self.output = ConvLayer(num_inputs, num_classes, bn=False, kernel_size=1)
         self.epoch = 0
 
     def encode(self, x):
